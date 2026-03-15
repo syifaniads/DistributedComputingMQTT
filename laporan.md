@@ -44,6 +44,7 @@ Saat data diterima oleh subscriber MQTT, setiap pesan dari broker akan diproses 
 buffer.append(payload)
 
 Data dari berbagai stasiun cuaca akan masuk ke buffer sesuai dengan urutan kedatangan pesan dari MQTT broker. Karena publisher mengirimkan data secara bergantian dari lima stasiun, maka urutan data yang masuk ke buffer biasanya akan terlihat seperti berikut:
+
 WS-001
 WS-002
 WS-003
