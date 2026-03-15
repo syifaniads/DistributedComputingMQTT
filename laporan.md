@@ -82,4 +82,38 @@ WS-004      4   30.53   39.10  147.75     277      60.85 Tidak Sehat (sensitif)
 WS-005      4   23.62   28.47  144.00     253      81.59 Tidak Sehat (sensitif)
 - Setelah data dikelompokkan, fase Reduce dapat menghitung statistik untuk setiap stasiun secara terpisah.
 
-- 
+ **3. Jika BATCH_SIZE ditingkatkan menjadi 100, apa dampaknya terhadap akurasi statistik dan latensi hasil?**
+
+Pada program MapReduce yang dibuat, nilai BATCH_SIZE menentukan jumlah pesan data yang harus terkumpul di dalam buffer sebelum proses Map → Shuffle → Reduce dijalankan.Pada kode yang digunakan:
+BATCH_SIZE = 20
+
+Artinya proses MapReduce akan dijalankan setiap kali 20 pesan berhasil dikumpulkan. Jika nilai tersebut ditingkatkan menjadi:
+BATCH_SIZE = 100
+
+maka sistem harus menunggu hingga 100 pesan terkumpul sebelum menjalankan proses MapReduce. Karena publisher mengirim 5 pesan per detik, maka waktu yang dibutuhkan untuk mengumpulkan 100 pesan adalah:
+
+100 pesan ÷ 5 pesan per detik = ± 20 detik
+
+Dengan demikian, hasil analisis baru akan muncul sekitar setiap 20 detik.
+
+- Dampak terhadap akurasi statistik
+
+Jika ukuran batch diperbesar menjadi 100, maka statistik yang dihasilkan cenderung lebih stabil dan akurat. Hal ini terjadi karena: jumlah data yang dianalisis lebih banyak, variasi data sensor yang digunakan dalam perhitungan lebih besar, nilai rata-rata (average) menjadi lebih representatif
+
+Sebagai contoh:
+
+rata-rata suhu (suhu_avg), rata-rata AQI (aqi_avg), total curah hujan (hujan_total)
+
+akan dihitung dari lebih banyak data, sehingga hasilnya lebih mendekati kondisi sebenarnya.
+
+- Dampak terhadap latensi hasil
+
+Namun peningkatan ukuran batch juga menyebabkan latensi hasil menjadi lebih tinggi.m Hal ini terjadi karena sistem harus menunggu lebih lama hingga buffer penuh sebelum menjalankan proses MapReduce.
+
+Perbandingan waktu:
+| BATCH_SIZE | Waktu tunggu |
+| ---------- | ------------ |
+| 20         | ±4 detik     |
+| 100        | ±20 detik    |
+
+Artinya, pengguna harus menunggu lebih lama untuk melihat hasil analisis terbaru.
