@@ -1,116 +1,57 @@
 import json
 import os
-from collections import defaultdict
+
 import paho.mqtt.client as mqtt
 
-BROKER_HOST = os.environ.get("MQTT_BROKER", "10.34.100.103")
-BROKER_PORT = int(os.environ.get("MQTT_PORT", 1883))
-TOPIC = "stasiun/cuaca/#"
-BATCH_SIZE = 20
+from subscriber.weather_processing import aggregate_batch
+
+BROKER_HOST = os.environ.get("MQTT_BROKER", "localhost")
+BROKER_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+TOPIC = os.environ.get("MQTT_TOPIC", "stasiun/cuaca/#")
+BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "20"))
 
 buffer = []
 batch_no = 1
 
 
-def kategori_aqi(aqi):
-    if aqi <= 50:
-        return "Baik"
-    elif aqi <= 100:
-        return "Sedang"
-    elif aqi <= 150:
-        return "Tidak Sehat (sensitif)"
-    elif aqi <= 200:
-        return "Tidak Sehat"
-    else:
-        return "Sangat Tidak Sehat"
-
-
 def process_batch(data):
-
     global batch_no
-
-    print("\n════════════════════════════════════════════")
-    print(f"[MapReduce] Batch #{batch_no} ({len(data)} record)")
-    print("════════════════════════════════════════════")
-
-    # MAP
-    mapped = []
-
-    for d in data:
-        mapped.append(
-            (
-                d["station_id"],
-                {
-                    "suhu": d["suhu_c"],
-                    "kelembaban": d["kelembaban_pct"],
-                    "aqi": d["aqi"],
-                    "hujan": d["curah_hujan_mm"],
-                    "angin": d["kecepatan_angin"],
-                },
-            )
-        )
-
-    # SHUFFLE
-    grouped = defaultdict(list)
-
-    for key, value in mapped:
-        grouped[key].append(value)
-
-    print(
-        "Stasiun  Count  SuhuAvg  SuhuMax  AQIavg  AQImax  HujanTotal  StatusUdara"
-    )
-
-    # REDUCE
-    for station, values in grouped.items():
-
-        count = len(values)
-        suhu = [v["suhu"] for v in values]
-        aqi = [v["aqi"] for v in values]
-        hujan = [v["hujan"] for v in values]
-        lembab = [v["kelembaban"] for v in values]
-
-        suhu_avg = sum(suhu) / count
-        suhu_max = max(suhu)
-
-        aqi_avg = sum(aqi) / count
-        aqi_max = max(aqi)
-
-        hujan_total = sum(hujan)
-
-        status = kategori_aqi(aqi_avg)
-
+    results = aggregate_batch(data)
+    print(f"\n[MapReduce] Batch #{batch_no} ({len(data)} records)")
+    print("station count temp_avg temp_max aqi_avg aqi_max rain_total status")
+    for station, stats in sorted(results.items()):
         print(
-            f"{station:7} {count:5} {suhu_avg:7.2f} {suhu_max:7.2f} {aqi_avg:7.2f} {aqi_max:7} {hujan_total:10.2f} {status}"
+            f"{station:7} {stats['count']:5} "
+            f"{stats['temperature_avg']:8.2f} {stats['temperature_max']:8.2f} "
+            f"{stats['aqi_avg']:7.2f} {stats['aqi_max']:7.0f} "
+            f"{stats['rain_total']:10.2f} {stats['air_status']}"
         )
-
     batch_no += 1
 
 
-def on_connect(client, userdata, flags, rc, properties=None):
-    print("Connected to broker")
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    print(f"connected to {BROKER_HOST}:{BROKER_PORT}")
     client.subscribe(TOPIC)
 
 
 def on_message(client, userdata, msg):
-
     try:
-        payload = json.loads(msg.payload.decode())
-
+        payload = json.loads(msg.payload.decode("utf-8"))
         buffer.append(payload)
-
         if len(buffer) >= BATCH_SIZE:
-            process_batch(buffer.copy())
-            buffer.clear()
+            process_batch(buffer[:BATCH_SIZE])
+            del buffer[:BATCH_SIZE]
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        print("discarded invalid event:", exc)
 
-    except Exception as e:
-        print("Error:", e)
+
+def main():
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(BROKER_HOST, BROKER_PORT, 60)
+    client.loop_forever()
 
 
-client = mqtt.Client()
-
-client.on_connect = on_connect
-client.on_message = on_message
-
-client.connect(BROKER_HOST, BROKER_PORT, 60)
-
-client.loop_forever()
+if __name__ == "__main__":
+    main()

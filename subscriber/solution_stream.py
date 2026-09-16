@@ -1,105 +1,51 @@
 import json
 import os
-from collections import defaultdict, deque
+
 import paho.mqtt.client as mqtt
 
-BROKER_HOST = os.environ.get("MQTT_BROKER", "10.34.100.103")
-BROKER_PORT = int(os.environ.get("MQTT_PORT", 1883))
-TOPIC = "stasiun/cuaca/#"
+from subscriber.weather_processing import WindowProcessor
 
-WINDOW_SIZE = 10
-SLIDE_SIZE = 5
-
-ALERT_SUHU_MAX = 38
-ALERT_AQI_MAX = 150
-ALERT_ANGIN_MAX = 40
-ALERT_HUJAN_MIN = 5
-
-sliding = defaultdict(lambda: deque(maxlen=SLIDE_SIZE))
-tumbling = defaultdict(list)
-
+BROKER_HOST = os.environ.get("MQTT_BROKER", "localhost")
+BROKER_PORT = int(os.environ.get("MQTT_PORT", "1883"))
+TOPIC = os.environ.get("MQTT_TOPIC", "stasiun/cuaca/#")
+WINDOW_SIZE = int(os.environ.get("TUMBLE_SIZE", "10"))
+SLIDE_SIZE = int(os.environ.get("SLIDE_SIZE", "5"))
+processor = WindowProcessor(slide_size=SLIDE_SIZE, tumble_size=WINDOW_SIZE)
 event_id = 1
 
 
-def on_connect(client, userdata, flags, rc, properties=None):
-    print("Connected to broker")
+def on_connect(client, userdata, flags, reason_code, properties=None):
+    print(f"connected to {BROKER_HOST}:{BROKER_PORT}")
     client.subscribe(TOPIC)
 
 
 def on_message(client, userdata, msg):
-
     global event_id
-
     try:
-        d = json.loads(msg.payload.decode())
-
-        sid = d["station_id"]
-
+        event = json.loads(msg.payload.decode("utf-8"))
+        result = processor.process(event)
         print(
-            f"[Stream #{event_id:4}] {sid} {d['lokasi']} | suhu={d['suhu_c']}C aqi={d['aqi']} angin={d['kecepatan_angin']} hujan={d['curah_hujan_mm']}"
+            f"[Stream #{event_id:4}] {result['station_id']} "
+            f"slide_n={result['sliding_count']} "
+            f"avg_temp={result['sliding_temperature_avg']:.2f} "
+            f"avg_aqi={result['sliding_aqi_avg']:.2f}"
         )
-
-        alerts = []
-
-        if d["suhu_c"] > ALERT_SUHU_MAX:
-            alerts.append("SUHU TINGGI")
-
-        if d["aqi"] > ALERT_AQI_MAX:
-            alerts.append("AQI TIDAK SEHAT")
-
-        if d["kecepatan_angin"] > ALERT_ANGIN_MAX:
-            alerts.append("ANGIN KENCANG")
-
-        if d["curah_hujan_mm"] > ALERT_HUJAN_MIN:
-            alerts.append("HUJAN LEBAT")
-
-        if alerts:
-            print(" ALERT:", ", ".join(alerts))
-
-        # sliding window
-        sliding[sid].append(d)
-
-        if len(sliding[sid]) >= 2:
-
-            avg_suhu = sum(x["suhu_c"] for x in sliding[sid]) / len(sliding[sid])
-            avg_aqi = sum(x["aqi"] for x in sliding[sid]) / len(sliding[sid])
-
-            print(
-                f" sliding[{sid}] avg_suhu={avg_suhu:.2f} avg_aqi={avg_aqi:.2f}"
-            )
-
-        # tumbling window
-        tumbling[sid].append(d)
-
-        if len(tumbling[sid]) >= WINDOW_SIZE:
-
-            data = tumbling[sid]
-
-            avg_suhu = sum(x["suhu_c"] for x in data) / len(data)
-            max_suhu = max(x["suhu_c"] for x in data)
-
-            avg_aqi = sum(x["aqi"] for x in data) / len(data)
-            max_aqi = max(x["aqi"] for x in data)
-
-            print("\nTUMBLING WINDOW", sid)
-            print("avg_suhu:", avg_suhu)
-            print("max_suhu:", max_suhu)
-            print("avg_aqi:", avg_aqi)
-            print("max_aqi:", max_aqi)
-
-            tumbling[sid].clear()
-
+        if result["alerts"]:
+            print(" ALERT:", ", ".join(result["alerts"]))
+        if result["tumbling"] is not None:
+            print(" TUMBLING:", result["tumbling"])
         event_id += 1
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        print("discarded invalid event:", exc)
 
-    except Exception as e:
-        print("Error:", e)
+
+def main():
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(BROKER_HOST, BROKER_PORT, 60)
+    client.loop_forever()
 
 
-client = mqtt.Client()
-
-client.on_connect = on_connect
-client.on_message = on_message
-
-client.connect(BROKER_HOST, BROKER_PORT, 60)
-
-client.loop_forever()
+if __name__ == "__main__":
+    main()
